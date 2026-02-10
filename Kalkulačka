@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investiční kalkulačka Gemini</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --secondary: #10b981;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: var(--card);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        h1 { text-align: center; color: var(--primary); margin-bottom: 30px; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .input-group { display: flex; flex-direction: column; }
+        label { font-weight: 600; margin-bottom: 8px; font-size: 0.9rem; }
+        input, select {
+            padding: 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        input:focus { outline: none; border-color: var(--primary); }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: #f1f5f9;
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .stat-card h3 { margin: 0; font-size: 0.8rem; color: #64748b; text-transform: uppercase; }
+        .stat-card p { margin: 5px 0 0; font-size: 1.2rem; font-weight: bold; color: var(--primary); }
+
+        canvas { margin-top: 30px; max-height: 400px; }
+
+        .highlight { color: var(--secondary) !important; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Smart Investiční Kalkulačka</h1>
+
+    <div class="grid">
+        <div class="input-group">
+            <label>Počáteční investice (Kč)</label>
+            <input type="number" id="initialDeposit" value="50000">
+        </div>
+        <div class="input-group">
+            <label>Měsíční vklad (Kč)</label>
+            <input type="number" id="monthlyDeposit" value="5000">
+        </div>
+        <div class="input-group">
+            <label>Doba investování (let)</label>
+            <input type="number" id="years" value="20">
+        </div>
+        <div class="input-group">
+            <label>Roční zhodnocení (%)</label>
+            <input type="number" id="annualReturn" value="7" step="0.1">
+        </div>
+        <div class="input-group">
+            <label>Průměrná inflace (%)</label>
+            <input type="number" id="inflation" value="3" step="0.1">
+        </div>
+        <div class="input-group">
+            <label>Frekvence úročení</label>
+            <select id="compoundFrequency">
+                <option value="12">Měsíčně</option>
+                <option value="4">Kvartálně</option>
+                <option value="1" selected>Ročně</option>
+            </select>
+        </div>
+        <div class="input-group">
+            <label>Navýšit vklad každých (let)</label>
+            <input type="number" id="stepYears" value="5">
+        </div>
+        <div class="input-group">
+            <label>O kolik navýšit vklad (Kč)</label>
+            <input type="number" id="stepAmount" value="1000">
+        </div>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <h3>Nominální hodnota</h3>
+            <p id="totalNominal">0 Kč</p>
+        </div>
+        <div class="stat-card">
+            <h3>Reálná hodnota (po inflaci)</h3>
+            <p id="totalReal" class="highlight">0 Kč</p>
+        </div>
+        <div class="stat-card">
+            <h3>Celkem investováno</h3>
+            <p id="totalInvested">0 Kč</p>
+        </div>
+    </div>
+
+    <canvas id="investmentChart"></canvas>
+</div>
+
+<script>
+    let chart;
+
+    function calculate() {
+        const initialDeposit = parseFloat(document.getElementById('initialDeposit').value) || 0;
+        const monthlyDeposit = parseFloat(document.getElementById('monthlyDeposit').value) || 0;
+        const years = parseInt(document.getElementById('years').value) || 0;
+        const annualReturn = (parseFloat(document.getElementById('annualReturn').value) || 0) / 100;
+        const inflation = (parseFloat(document.getElementById('inflation').value) || 0) / 100;
+        const frequency = parseInt(document.getElementById('compoundFrequency').value);
+        const stepYears = parseInt(document.getElementById('stepYears').value) || 0;
+        const stepAmount = parseFloat(document.getElementById('stepAmount').value) || 0;
+
+        let totalNominal = initialDeposit;
+        let totalReal = initialDeposit;
+        let totalInvested = initialDeposit;
+        let currentMonthlyDeposit = monthlyDeposit;
+
+        const labels = [];
+        const nominalData = [];
+        const realData = [];
+        const investedData = [];
+
+        for (let m = 0; m <= years * 12; m++) {
+            // Navyšování úložky každých X let
+            if (m > 0 && stepYears > 0 && m % (stepYears * 12) === 0) {
+                currentMonthlyDeposit += stepAmount;
+            }
+
+            // Úročení (pokud měsíc odpovídá frekvenci)
+            if (m > 0) {
+                // Přidání měsíčního vkladu
+                totalNominal += currentMonthlyDeposit;
+                totalInvested += currentMonthlyDeposit;
+                
+                // Zjednodušený výpočet složeného úročení pro grafické zobrazení po měsících
+                // Přepočet roční sazby na periodickou
+                const ratePerPeriod = annualReturn / frequency;
+                if (m % (12 / frequency) === 0) {
+                    totalNominal *= (1 + ratePerPeriod);
+                }
+            }
+
+            // Výpočet reálné hodnoty (diskontování inflací)
+            totalReal = totalNominal / Math.pow(1 + (inflation / 12), m);
+
+            if (m % 12 === 0) {
+                labels.push(`${m / 12}. rok`);
+                nominalData.push(Math.round(totalNominal));
+                realData.push(Math.round(totalReal));
+                investedData.push(Math.round(totalInvested));
+            }
+        }
+
+        updateUI(totalNominal, totalReal, totalInvested);
+        updateChart(labels, nominalData, realData, investedData);
+    }
+
+    function updateUI(nominal, real, invested) {
+        const format = (val) => new Intl.NumberFormat('cs-CZ', { style: 'currency', currency: 'CZK', maximumFractionDigits: 0 }).format(val);
+        document.getElementById('totalNominal').innerText = format(nominal);
+        document.getElementById('totalReal').innerText = format(real);
+        document.getElementById('totalInvested').innerText = format(invested);
+    }
+
+    function updateChart(labels, nominal, real, invested) {
+        const ctx = document.getElementById('investmentChart').getContext('2d');
+        
+        if (chart) chart.destroy();
+
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Nominální hodnota',
+                        data: nominal,
+                        borderColor: '#4f46e5',
+                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    },
+                    {
+                        label: 'Reálná hodnota (po inflaci)',
+                        data: real,
+                        borderColor: '#10b981',
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0.3
+                    },
+                    {
+                        label: 'Celkové vklady',
+                        data: invested,
+                        borderColor: '#94a3b8',
+                        fill: false,
+                        tension: 0.3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom' }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: value => value.toLocaleString() + ' Kč'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Event listenery pro okamžitý přepočet při změně
+    document.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('input', calculate);
+    });
+
+    // Prvotní výpočet
+    calculate();
+</script>
+
+</body>
+</html>
